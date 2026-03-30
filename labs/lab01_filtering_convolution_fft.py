@@ -29,6 +29,8 @@ def conv2d(image: npt.NDArray[np.generic], kernel: npt.NDArray[np.generic], bord
     image_f = image.astype(np.float32)
     kernel_f = kernel.astype(np.float32)
 
+    kernel = np.flip(kernel, (0, 1))
+
     border_map = {
         "reflect": cv2.BORDER_REFLECT,
         "constant": cv2.BORDER_CONSTANT,
