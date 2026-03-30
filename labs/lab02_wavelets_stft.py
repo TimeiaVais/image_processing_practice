@@ -9,6 +9,7 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 import numpy.typing as npt
+from scipy.signal import stft
 
 ThresholdMode = Literal["soft", "hard"]
 
@@ -25,7 +26,15 @@ def haar_dwt1(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Returns:
         (approx, detail): each length ~N/2.
     """
-    raise NotImplementedError("haar_dwt1 is not implemented")
+    x = x.astype(np.float32)
+
+    if len(x) % 2 == 1:
+        x = np.append(x, x[-1])
+
+    approx = (x[0::2] + x[1::2]) / np.sqrt(2)
+    detail = (x[0::2] - x[1::2]) / np.sqrt(2)
+
+    return approx, detail
 
 
 def haar_idwt1(approx: np.ndarray, detail: np.ndarray) -> np.ndarray:
@@ -39,7 +48,13 @@ def haar_idwt1(approx: np.ndarray, detail: np.ndarray) -> np.ndarray:
     Returns:
         Reconstructed signal.
     """
-    raise NotImplementedError("haar_idwt1 is not implemented")
+    n = len(approx)
+    x = np.zeros(n * 2, dtype=np.float32)
+
+    x[0::2] = (approx + detail) / np.sqrt(2)
+    x[1::2] = (approx - detail) / np.sqrt(2)
+
+    return x
 
 
 def haar_dwt2(image: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -52,7 +67,32 @@ def haar_dwt2(image: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarr
     Returns:
         LL, (LH, HL, HH).
     """
-    raise NotImplementedError("haar_dwt2 is not implemented")
+    image = image.astype(np.float32)
+
+    rows, cols = image.shape
+
+    # Row transform
+    temp = []
+    for r in range(rows):
+        a, d = haar_dwt1(image[r, :])
+        temp.append(np.concatenate([a, d]))
+    temp = np.array(temp)
+
+    # Column transform
+    temp = temp.T
+    temp2 = []
+    for c in range(temp.shape[0]):
+        a, d = haar_dwt1(temp[c, :])
+        temp2.append(np.concatenate([a, d]))
+    temp2 = np.array(temp2).T
+
+    h2, w2 = temp2.shape
+    LL = temp2[: h2 // 2, : w2 // 2]
+    LH = temp2[: h2 // 2, w2 // 2 :]
+    HL = temp2[h2 // 2 :, : w2 // 2]
+    HH = temp2[h2 // 2 :, w2 // 2 :]
+
+    return LL, (LH, HL, HH)
 
 
 def haar_idwt2(LL: np.ndarray, bands: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
@@ -66,7 +106,32 @@ def haar_idwt2(LL: np.ndarray, bands: tuple[np.ndarray, np.ndarray, np.ndarray])
     Returns:
         Reconstructed image (crop policy for odd sizes should be documented).
     """
-    raise NotImplementedError("haar_idwt2 is not implemented")
+    LH, HL, HH = bands
+
+    top = np.hstack([LL, LH])
+    bottom = np.hstack([HL, HH])
+    temp = np.vstack([top, bottom])
+
+    # Inverse column transform
+    temp = temp.T
+    rec_cols = []
+    for c in range(temp.shape[0]):
+        half = temp.shape[1] // 2
+        a = temp[c, :half]
+        d = temp[c, half:]
+        rec_cols.append(haar_idwt1(a, d))
+    temp = np.array(rec_cols).T
+
+    # Inverse row transform
+    rec_rows = []
+    for r in range(temp.shape[0]):
+        half = temp.shape[1] // 2
+        a = temp[r, :half]
+        d = temp[r, half:]
+        rec_rows.append(haar_idwt1(a, d))
+    rec = np.array(rec_rows)
+
+    return rec
 
 
 def wavelet_threshold(coeffs: Any, threshold: float, mode: ThresholdMode = "soft") -> Any:
@@ -81,7 +146,17 @@ def wavelet_threshold(coeffs: Any, threshold: float, mode: ThresholdMode = "soft
     Returns:
         Thresholded coefficients with same structure.
     """
-    raise NotImplementedError("wavelet_threshold is not implemented")
+    if isinstance(coeffs, tuple) or isinstance(coeffs, list):
+        return tuple(wavelet_threshold(c, threshold, mode) for c in coeffs)
+
+    coeffs = coeffs.copy()
+
+    if mode == "hard":
+        coeffs[np.abs(coeffs) < threshold] = 0
+    else:
+        coeffs = np.sign(coeffs) * np.maximum(np.abs(coeffs) - threshold, 0)
+
+    return coeffs
 
 
 def wavelet_denoise(image: np.ndarray, levels: int, threshold: float, mode: ThresholdMode = "soft") -> np.ndarray:
@@ -97,7 +172,28 @@ def wavelet_denoise(image: np.ndarray, levels: int, threshold: float, mode: Thre
     Returns:
         Denoised image with deterministic behavior.
     """
-    raise NotImplementedError("wavelet_denoise is not implemented")
+    coeffs = []
+    current = image.copy()
+
+    for _ in range(levels):
+        LL, bands = haar_dwt2(current)
+        coeffs.append((LL, bands))
+        current = LL
+
+    # Threshold detail bands
+    new_coeffs = []
+    for LL, (LH, HL, HH) in coeffs:
+        LH = wavelet_threshold(LH, threshold, mode)
+        HL = wavelet_threshold(HL, threshold, mode)
+        HH = wavelet_threshold(HH, threshold, mode)
+        new_coeffs.append((LL, (LH, HL, HH)))
+
+    # Reconstruct
+    rec = new_coeffs[-1][0]
+    for LL, bands in reversed(new_coeffs):
+        rec = haar_idwt2(rec, bands)
+
+    return np.clip(rec, 0, 255)
 
 
 def stft1(
@@ -113,7 +209,15 @@ def stft1(
     Returns:
         `(freqs_hz, times_s, Zxx)` where `Zxx` is complex.
     """
-    raise NotImplementedError("stft1 is not implemented")
+    freqs, times, Zxx = stft(
+        x,
+        fs=fs_hz,
+        window=window,
+        nperseg=frame_len,
+        noverlap=frame_len - hop_len,
+    )
+
+    return freqs, times, Zxx
 
 
 def spectrogram_magnitude(Zxx: np.ndarray, log_scale: bool = True) -> np.ndarray:
@@ -127,12 +231,24 @@ def spectrogram_magnitude(Zxx: np.ndarray, log_scale: bool = True) -> np.ndarray
     Returns:
         Non-negative finite magnitude matrix.
     """
-    raise NotImplementedError("spectrogram_magnitude is not implemented")
+    mag = np.abs(Zxx)
+
+    if log_scale:
+        mag = np.log1p(mag)
+
+    return mag
 
 
 def normalize_to_uint8(x: npt.ArrayLike) -> npt.NDArray[np.uint8]:
     """Min-max normalize an array to `[0,255]` for visualization."""
-    raise NotImplementedError("normalize_to_uint8 is not implemented")
+    arr = np.asarray(x, dtype=np.float32)
+    mn, mx = arr.min(), arr.max()
+
+    if mx <= mn:
+        return np.zeros_like(arr, dtype=np.uint8)
+
+    y = (arr - mn) * 255.0 / (mx - mn)
+    return y.astype(np.uint8)
 
 
 def main() -> int:
