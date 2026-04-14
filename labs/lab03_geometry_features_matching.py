@@ -22,7 +22,14 @@ def warp_affine(image: np.ndarray, M: np.ndarray, out_shape: tuple[int, int], bo
     Returns:
         Warped image.
     """
-    raise NotImplementedError("warp_affine is not implemented")
+    border_map = {
+        "reflect": cv2.BORDER_REFLECT,
+        "constant": cv2.BORDER_CONSTANT,
+        "replicate": cv2.BORDER_REPLICATE
+    }
+    border_mode = border_map.get(border, cv2.BORDER_REFLECT)
+
+    return cv2.warpAffine(image, M, out_shape, borderMode=border_mode)
 
 
 def warp_perspective(image: np.ndarray, H: np.ndarray, out_shape: tuple[int, int], border: str = "reflect") -> np.ndarray:
@@ -38,7 +45,14 @@ def warp_perspective(image: np.ndarray, H: np.ndarray, out_shape: tuple[int, int
     Returns:
         Warped image.
     """
-    raise NotImplementedError("warp_perspective is not implemented")
+    border_map = {
+        "reflect": cv2.BORDER_REFLECT,
+        "constant": cv2.BORDER_CONSTANT,
+        "replicate": cv2.BORDER_REPLICATE
+    }
+    border_mode = border_map.get(border, cv2.BORDER_REFLECT)
+
+    return cv2.warpAffine(image, M, out_shape, borderMode=border_mode)
 
 
 def detect_orb(image: np.ndarray, n_features: int = 500) -> tuple[list[cv2.KeyPoint], np.ndarray | None]:
@@ -52,7 +66,9 @@ def detect_orb(image: np.ndarray, n_features: int = 500) -> tuple[list[cv2.KeyPo
     Returns:
         `(keypoints, descriptors)`, where descriptors may be `None`.
     """
-    raise NotImplementedError("detect_orb is not implemented")
+    orb = cv2.ORB_create(nfeatures=n_features)
+    kp, des = orb.detectAndCompute(image, None)
+    return kp, des
 
 
 def match_descriptors(
@@ -73,7 +89,16 @@ def match_descriptors(
     Returns:
         Good matches sorted by distance.
     """
-    raise NotImplementedError("match_descriptors is not implemented")
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)  # For ORB, we use NORM_HAMMING
+    matches = bf.match(desc1, desc2)
+    
+    # Apply ratio test if needed
+    if ratio_test > 0:
+        matches = sorted(matches, key=lambda x: x.distance)
+        good_matches = [m for m in matches if m.distance < ratio_test * matches[0].distance]
+        return good_matches
+    else:
+        return matches
 
 
 def estimate_homography_from_matches(
@@ -94,7 +119,11 @@ def estimate_homography_from_matches(
     Returns:
         `(H, inlier_mask)` or `(None, None)`.
     """
-    raise NotImplementedError("estimate_homography_from_matches is not implemented")
+    src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+    
+    H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransac_thresh)
+    return H, mask
 
 
 def main() -> int:
