@@ -28,8 +28,8 @@ def warp_affine(image: np.ndarray, M: np.ndarray, out_shape: tuple[int, int], bo
         "replicate": cv2.BORDER_REPLICATE
     }
     border_mode = border_map.get(border, cv2.BORDER_REFLECT)
-
-    return cv2.warpAffine(image, M, out_shape, borderMode=border_mode)
+    dsize = (out_shape[1], out_shape[0])
+    return cv2.warpAffine(image, M, dsize, borderMode=border_mode)
 
 
 def warp_perspective(image: np.ndarray, H: np.ndarray, out_shape: tuple[int, int], border: str = "reflect") -> np.ndarray:
@@ -51,8 +51,9 @@ def warp_perspective(image: np.ndarray, H: np.ndarray, out_shape: tuple[int, int
         "replicate": cv2.BORDER_REPLICATE
     }
     border_mode = border_map.get(border, cv2.BORDER_REFLECT)
+    dsize = (out_shape[1], out_shape[0])
 
-    return cv2.warpAffine(image, M, out_shape, borderMode=border_mode)
+    return cv2.warpPerspective(image, H, dsize, flags=cv2.INTER_LINEAR, borderMode=border_mode)
 
 
 def detect_orb(image: np.ndarray, n_features: int = 500) -> tuple[list[cv2.KeyPoint], np.ndarray | None]:
@@ -89,16 +90,20 @@ def match_descriptors(
     Returns:
         Good matches sorted by distance.
     """
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)  # For ORB, we use NORM_HAMMING
-    matches = bf.match(desc1, desc2)
-    
-    # Apply ratio test if needed
-    if ratio_test > 0:
-        matches = sorted(matches, key=lambda x: x.distance)
-        good_matches = [m for m in matches if m.distance < ratio_test * matches[0].distance]
-        return good_matches
-    else:
-        return matches
+    if desc1 is None or desc2 is None:
+        return []
+
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+
+    knn_matches = matcher.knnMatch(desc1, desc2, k=2)
+
+    good_matches = []
+    for m, n in knn_matches:
+        if m.distance < ratio_test * n.distance:
+            good_matches.append(m)
+
+    good_matches.sort(key=lambda x: x.distance)
+    return good_matches
 
 
 def estimate_homography_from_matches(
@@ -119,10 +124,14 @@ def estimate_homography_from_matches(
     Returns:
         `(H, inlier_mask)` or `(None, None)`.
     """
+    if len(matches) < 4:
+        return None, None
+
     src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-    
+
     H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransac_thresh)
+
     return H, mask
 
 
@@ -139,7 +148,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Lab 03 skeleton (implement functions first).")
     parser.add_argument("--img", type=str, default="lenna.png", help="Input image from ./imgs/")
     parser.add_argument("--out", type=str, default="out/lab03", help="Output directory (relative to repo root)")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     import matplotlib
 
@@ -152,7 +161,10 @@ def main() -> int:
         plt.savefig(path, dpi=150)
         plt.close()
 
-    repo_root = Path(__file__).resolve().parents[1]
+    try:
+      repo_root = Path(__file__).resolve().parents[1]
+    except NameError:
+      repo_root = Path.cwd()
     imgs_dir = repo_root / "imgs"
     out_dir = (repo_root / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -194,7 +206,7 @@ def main() -> int:
         h_est, inliers = estimate_homography_from_matches(kp1, kp2, matches, ransac_thresh=3.0)
 
         if inliers is not None:
-            draw_matches = [m for m, keep in zip(matches, inliers, strict=False) if int(keep) > 0]
+            draw_matches = [m for m, keep in zip(matches, inliers, strict=False) if keep[0] > 0]
         else:
             draw_matches = matches
         draw_matches = draw_matches[:80]
