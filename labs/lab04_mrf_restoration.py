@@ -35,7 +35,29 @@ def mrf_energy(
     Returns:
         Scalar energy.
     """
-    raise NotImplementedError("mrf_energy is not implemented")
+    # Data term
+    data_term = np.sum((x - y) ** 2)
+
+    # Differences (4-neighborhood)
+    dx = x[:, 1:] - x[:, :-1]
+    dy = x[1:, :] - x[:-1, :]
+
+    if penalty == "quadratic":
+        smooth = np.sum(dx**2) + np.sum(dy**2)
+
+    elif penalty == "huber":
+        def huber(z):
+            return np.where(
+                np.abs(z) <= huber_delta,
+                0.5 * z**2,
+                huber_delta * (np.abs(z) - 0.5 * huber_delta)
+            )
+        smooth = np.sum(huber(dx)) + np.sum(huber(dy))
+
+    else:
+        raise ValueError("Unknown penalty")
+
+    return float(data_term + lambda_smooth * smooth)
 
 
 def mrf_denoise(
@@ -60,12 +82,57 @@ def mrf_denoise(
     Returns:
         Restored image with the same shape as `y`.
     """
-    raise NotImplementedError("mrf_denoise is not implemented")
+    x = y.copy().astype(np.float32)
+
+    for _ in range(num_iters):
+
+        # Data gradient
+        grad = 2 * (x - y)
+
+        # Neighbor differences
+        dx_f = np.zeros_like(x)
+        dx_b = np.zeros_like(x)
+        dy_f = np.zeros_like(x)
+        dy_b = np.zeros_like(x)
+
+        dx_f[:, :-1] = x[:, :-1] - x[:, 1:]
+        dx_b[:, 1:] = x[:, 1:] - x[:, :-1]
+        dy_f[:-1, :] = x[:-1, :] - x[1:, :]
+        dy_b[1:, :] = x[1:, :] - x[:-1, :]
+
+        def grad_penalty(d):
+            if penalty == "quadratic":
+                return d
+            elif penalty == "huber":
+                return np.where(
+                    np.abs(d) <= huber_delta,
+                    d,
+                    huber_delta * np.sign(d)
+                )
+            else:
+                raise ValueError("Unknown penalty")
+
+        grad += lambda_smooth * (
+            grad_penalty(dx_f) +
+            grad_penalty(dx_b) +
+            grad_penalty(dy_f) +
+            grad_penalty(dy_b)
+        )
+
+        x = x - step * grad
+
+    return x
 
 
 def normalize_to_uint8(x: np.ndarray) -> np.ndarray:
-    """Min-max normalize array to [0,255] uint8 for visualization."""
-    raise NotImplementedError("normalize_to_uint8 is not implemented")
+    arr = x.astype(np.float32)
+    mn, mx = np.min(arr), np.max(arr)
+
+    if mx <= mn:
+        return np.zeros_like(arr, dtype=np.uint8)
+
+    arr = (arr - mn) * 255.0 / (mx - mn)
+    return np.clip(arr, 0, 255).astype(np.uint8)
 
 
 def main() -> int:
@@ -81,7 +148,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Lab 04 skeleton (implement functions first).")
     parser.add_argument("--img", type=str, default="lenna.png", help="Input image from ./imgs/")
     parser.add_argument("--out", type=str, default="out/lab04", help="Output directory (relative to repo root)")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     import matplotlib
 
@@ -94,7 +161,10 @@ def main() -> int:
         plt.savefig(path, dpi=150)
         plt.close()
 
-    repo_root = Path(__file__).resolve().parents[1]
+    try:
+      repo_root = Path(__file__).resolve().parents[1]
+    except NameError:
+      repo_root = Path.cwd()
     imgs_dir = repo_root / "imgs"
     out_dir = (repo_root / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
