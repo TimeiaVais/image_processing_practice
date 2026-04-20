@@ -26,7 +26,34 @@ def optical_flow_farneback(prev_gray: np.ndarray, next_gray: np.ndarray, **param
     Returns:
         Dense flow field `(H, W, 2)` as float array.
     """
-    raise NotImplementedError("optical_flow_farneback is not implemented")
+    # Default parameters (можеш змінювати для якості)
+    fb_params = dict(
+        pyr_scale=0.5,
+        levels=3,
+        winsize=25,
+        iterations=5,
+        poly_n=5,
+        poly_sigma=1.2,
+        flags=0,
+    )
+
+    # Override
+    fb_params.update(params)
+
+    flow = cv2.calcOpticalFlowFarneback(
+        prev_gray,
+        next_gray,
+        None,
+        fb_params["pyr_scale"],
+        fb_params["levels"],
+        fb_params["winsize"],
+        fb_params["iterations"],
+        fb_params["poly_n"],
+        fb_params["poly_sigma"],
+        fb_params["flags"],
+    )
+
+    return flow.astype(np.float32)
 
 
 def flow_to_hsv(flow_xy: np.ndarray) -> np.ndarray:
@@ -39,7 +66,28 @@ def flow_to_hsv(flow_xy: np.ndarray) -> np.ndarray:
     Returns:
         `uint8` BGR image `(H,W,3)` suitable for `cv2.imwrite`.
     """
-    raise NotImplementedError("flow_to_hsv is not implemented")
+    h, w = flow_xy.shape[:2]
+
+    dx = flow_xy[..., 0]
+    dy = flow_xy[..., 1]
+
+    # Magnitude and angle
+    mag, ang = cv2.cartToPolar(dx, dy, angleInDegrees=True)
+
+    hsv = np.zeros((h, w, 3), dtype=np.uint8)
+
+    # Hue = direction
+    hsv[..., 0] = ang / 2  # OpenCV uses [0,180]
+
+    # Saturation = max
+    hsv[..., 1] = 255
+
+    # Value = normalized magnitude
+    hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+    return bgr
 
 
 def main() -> int:
@@ -57,13 +105,16 @@ def main() -> int:
     parser.add_argument("--out", type=str, default="out/lab05", help="Output directory (relative to repo root)")
     parser.add_argument("--dx", type=float, default=5.0, help="Horizontal translation (pixels)")
     parser.add_argument("--dy", type=float, default=3.0, help="Vertical translation (pixels)")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     import matplotlib
 
     matplotlib.use("Agg")
 
-    repo_root = Path(__file__).resolve().parents[1]
+    try:
+      repo_root = Path(__file__).resolve().parents[1]
+    except NameError:
+      repo_root = Path.cwd()
     imgs_dir = repo_root / "imgs"
     out_dir = (repo_root / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
